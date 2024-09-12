@@ -72,6 +72,7 @@ export const SelectAsset: FC<SelectTokenProps> = (props) => {
                         <ul className={s.tokensList}>
                             {filteredTokens?.length > 0 ? filteredTokens.map(el => (
                                 <div className={s.tokenItem} key={v1()} onClick={() => {
+                                    console.log('set swap data', el)
                                     props.setSwapData({
                                         token: el.token,
                                         tokenLogo: el.tokenLogo,
