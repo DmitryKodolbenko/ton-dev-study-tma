@@ -16,6 +16,7 @@ import { getHubClient } from "../../utils/getClient";
 import { SelectAsset } from "../../components/selectAsset";
 import { DedustApi } from "../../logic/dedustApi";
 import { TonApi } from "../../logic/tonapi";
+import { DedustSwapService } from "../../logic/swapService";
 
 const initialSwapToken1: AssetType = {
   token: "TON",
@@ -104,7 +105,8 @@ export const Home: FC<HomeProps> = () => {
 
     const handleBtnClick = () => {
       WebAppSDK.HapticFeedback.impactOccurred("medium");
-      // swap logic
+      makeSwap()
+      WebAppSDK.MainButton.hideProgress();
     };
 
     if (modalOpen) {
@@ -188,8 +190,127 @@ export const Home: FC<HomeProps> = () => {
   }
 
   useEffect(() => {
-    getAssets()
-  }, [ userAddress ])
+    getAssets();
+  }, [userAddress]);
+
+  // get estimate
+  const dedustService = new DedustSwapService(getHubClient());
+
+  const debouncedTokenBalance1 = useDebounce(tokenBalance1, 500);
+
+  const getEstimate = async () => {
+    try {
+      setEstimateLoading(true);
+      const estimateBalance = await dedustService.getEstimateSwapOut(
+        token1.token,
+        token2.token,
+        debouncedTokenBalance1,
+        token1.tokenAddress[0],
+        token2.tokenAddress[0],
+        token1.decimals ?? 9,
+        token2.decimals ?? 9
+      );
+
+      setTokenBalance2(estimateBalance);
+      setEstimateLoading(false);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  useEffect(() => {
+    getEstimate();
+  }, [token1, token2, debouncedTokenBalance1]);
+
+  const makeSwap = async () => {
+    if (token1.token === token2.token) {
+      console.error("Same tokens");
+      WebAppSDK.MainButton.hideProgress();
+      return;
+    }
+    if (token1.token === "TON" && token2.token !== "TON") {
+      try {
+        WebAppSDK.MainButton.showProgress();
+
+        const swapObj = await dedustService.SwapTonToJetton(token2.tokenAddress[0], tokenBalance1)
+
+        if (!swapObj) {
+          console.error('swapObj error')
+          return
+        }
+
+        const tr = {
+          validUntil: Math.floor(Date.now() / 1000) + 90,
+          messages: [
+            {
+              address: swapObj.address,
+              amount: swapObj.amount,
+              payload: swapObj.payload
+            }
+          ]
+        }
+
+        const tx = await tonConnectUI.sendTransaction(tr)
+
+      } catch (err) {
+        console.error(err);
+      }
+    } else if (token1.token !== "TON" && token2.token === "TON") {
+      try {
+        WebAppSDK.MainButton.showProgress();
+
+        const swapObj = await dedustService.SwapJettonToTon(token1.tokenAddress[0], tokenBalance1, token1.decimals ?? 9, userAddress)
+
+        if (!swapObj) {
+          console.error('swapObj error')
+          return
+        }
+
+        const tr = {
+          validUntil: Math.floor(Date.now() / 1000) + 90,
+          messages: [
+            {
+              address: swapObj.address,
+              amount: swapObj.amount,
+              payload: swapObj.payload
+            }
+          ]
+        }
+
+        const tx = await tonConnectUI.sendTransaction(tr)
+
+      } catch (err) {
+        console.error(err);
+      }
+    } else if (token1.token !== "TON" && token2.token !== "TON") {
+      try {
+        WebAppSDK.MainButton.showProgress();
+
+        const swapObj = await dedustService.SwapJettonToJetton(userAddress, token1.tokenAddress[0], token2.tokenAddress[0], tokenBalance1, token1.decimals ?? 9)
+
+        if (!swapObj) {
+          console.error('swapObj error')
+          return
+        }
+
+        const tr = {
+          validUntil: Math.floor(Date.now() / 1000) + 90,
+          messages: [
+            {
+              address: swapObj.address,
+              amount: swapObj.amount,
+              payload: swapObj.payload
+            }
+          ]
+        }
+
+        const tx = await tonConnectUI.sendTransaction(tr)
+
+      } catch (err) {
+        console.error(err);
+      }
+    }
+  };
 
   return (
     <div className={s.swapWrapper}>
@@ -232,7 +353,8 @@ export const Home: FC<HomeProps> = () => {
 
         {modalOpen && (
           <SelectAsset
-            tokensData={isFromAssets
+            tokensData={
+              isFromAssets
                 ? dedustAssets?.filter(
                     (el) =>
                       !el.token
@@ -244,7 +366,8 @@ export const Home: FC<HomeProps> = () => {
                       !el.token
                         .toLocaleLowerCase()
                         .includes(token1.token.toLocaleLowerCase())
-                  )}
+                  )
+            }
             swapData={isFromAssets ? token1 : token2}
             setSwapData={isFromAssets ? setToken1 : setToken2}
             closeModal={() => {

@@ -192,26 +192,25 @@ export class DedustSwapService {
     const minAmountOut = (expectedAmoutOut * 99n) / 100n;
 
     try {
+      if (poolState.account.state.type !== "active") {
+        throw new Error("Pool not exist");
+      }
 
-        if (poolState.account.state.type !== 'active') {
-            throw new Error('Pool not exist')
-        }
+      if (vaultState.account.state.type !== "active") {
+        throw new Error("Native Vault not exist");
+      }
 
-        if (vaultState.account.state.type !== 'active') {
-            throw new Error('Native Vault not exist')
-        }
+      const swapBody = DedustSwapService.buildSwapMessageTonToJetton({
+        amount: amountIn,
+        poolAddress: pool.address,
+        limit: minAmountOut,
+      });
 
-        const swapBody = DedustSwapService.buildSwapMessageTonToJetton({
-            amount: amountIn,
-            poolAddress: pool.address,
-            limit: minAmountOut
-        })
-
-        return ({
-            address: nativeVault.address.toString(),
-            amount: (amountIn + toNano('0.5')).toString(),
-            payload: swapBody.toBoc().toString('base64')
-        })
+      return {
+        address: nativeVault.address.toString(),
+        amount: (amountIn + toNano("0.5")).toString(),
+        payload: swapBody.toBoc().toString("base64"),
+      };
     } catch (error) {
       console.error();
       return undefined;
@@ -224,7 +223,81 @@ export class DedustSwapService {
     decimals: number,
     userAddress: string
   ): Promise<readyTonconnectTr | undefined> {
-    return undefined;
+    const tonClient = this.client;
+
+    const currentSenderAddress = Address.parse(userAddress);
+
+    const factory = tonClient.open(
+      Factory.createFromAddress(MAINNET_FACTORY_ADDR)
+    );
+    const jettonVault = tonClient.open(
+      await factory.getJettonVault(Address.parse(tokenAddress))
+    );
+    const jettonRoot = tonClient.open(
+      JettonRoot.createFromAddress(Address.parse(tokenAddress))
+    );
+    const jettonWallet = tonClient.open(
+      await jettonRoot.getWallet(currentSenderAddress)
+    );
+
+    const amountIn = BigInt(Number(jettonAmountIn) * 10 ** decimals);
+
+    const poolJetton = tonClient.open(
+      Pool.createFromAddress(
+        await factory.getPoolAddress({
+          poolType: PoolType.VOLATILE,
+          assets: [Asset.jetton(jettonRoot.address), Asset.native()],
+        })
+      )
+    );
+
+    const lastBlock = await tonClient.getLastBlock();
+    const poolState = await tonClient.getAccountLite(
+      lastBlock.last.seqno,
+      poolJetton.address
+    );
+    const vaultState = await tonClient.getAccountLite(
+      lastBlock.last.seqno,
+      jettonWallet.address
+    );
+
+    const { amountOut: expectedAmountOut } =
+      await poolJetton.getEstimatedSwapOut({
+        assetIn: Asset.jetton(jettonRoot.address),
+        amountIn,
+      });
+
+    const minAmountOut = (expectedAmountOut * 99n) / 100n;
+
+    try {
+      if (poolState.account.state.type !== "active") {
+        throw new Error("Pool is not exist");
+      }
+
+      if (vaultState.account.state.type !== "active") {
+        throw new Error("Jetton Vault is not exist");
+      }
+
+      const swapBody = DedustSwapService.buildSwapMessageJettonWallet({
+        amount: amountIn,
+        destination: jettonVault.address,
+        responseAddress: currentSenderAddress,
+        forwardAmount: toNano("0.5"),
+        forwardPayload: VaultJetton.createSwapPayload({
+          poolAddress: poolJetton.address,
+          limit: minAmountOut,
+        }),
+      });
+
+      return {
+        address: jettonWallet.address.toString(),
+        amount: toNano("0.5").toString(),
+        payload: swapBody.toBoc().toString("base64"),
+      };
+    } catch (err) {
+      console.error(err);
+      return undefined;
+    }
   }
 
   public async SwapJettonToJetton(
@@ -234,7 +307,92 @@ export class DedustSwapService {
     jettonAmountIn: string,
     decimals: number
   ): Promise<readyTonconnectTr | undefined> {
-    return undefined;
+    const tonClient = this.client;
+
+    const currentSenderAddress = Address.parse(userAddress);
+
+    const factory = tonClient.open(
+      Factory.createFromAddress(MAINNET_FACTORY_ADDR)
+    );
+    const jetton1Vault = tonClient.open(
+      await factory.getJettonVault(Address.parse(tokenAddress1))
+    );
+
+    const jettonRoot = tonClient.open(
+      JettonRoot.createFromAddress(Address.parse(tokenAddress1))
+    );
+    const jettonWallet = tonClient.open(
+      await jettonRoot.getWallet(currentSenderAddress)
+    );
+
+    const amountIn = BigInt(Number(jettonAmountIn) * 10 ** decimals);
+
+    const JETTON1 = Asset.jetton(Address.parse(tokenAddress1));
+    const TON = Asset.native();
+    const JETTON2 = Asset.jetton(Address.parse(tokenAddress2));
+
+    const TON_JETOON1_POOL = tonClient.open(
+      await factory.getPool(PoolType.VOLATILE, [TON, JETTON1])
+    );
+    const TON_JETOON2_POOL = tonClient.open(
+      await factory.getPool(PoolType.VOLATILE, [TON, JETTON2])
+    );
+
+    const lastBlock = await tonClient.getLastBlock();
+
+    const pool1State = await tonClient.getAccountLite(
+      lastBlock.last.seqno,
+      TON_JETOON1_POOL.address
+    );
+    const vault1State = await tonClient.getAccountLite(
+      lastBlock.last.seqno,
+      jettonWallet.address
+    );
+    const pool2State = await tonClient.getAccountLite(
+      lastBlock.last.seqno,
+      TON_JETOON2_POOL.address
+    );
+
+    const { amountOut: expectedAmountOut1 } =
+      await TON_JETOON1_POOL.getEstimatedSwapOut({
+        assetIn: Asset.jetton(jettonRoot.address),
+        amountIn,
+      });
+
+    const minAmountOut = (expectedAmountOut1 * 99n) / 100n;
+
+    try {
+      if (pool1State.account.state.type !== "active") {
+        throw new Error("Pool is not exist");
+      }
+      if (vault1State.account.state.type !== "active") {
+        throw new Error("Vault is not exist");
+      }
+      if (pool2State.account.state.type !== "active") {
+        throw new Error("Pool is not exist");
+      }
+
+      const swapBody = DedustSwapService.buildSwapMessageJettonWallet({
+        amount: amountIn,
+        destination: jetton1Vault.address,
+        responseAddress: currentSenderAddress,
+        forwardAmount: toNano("0.5"),
+        forwardPayload: VaultJetton.createSwapPayload({
+          poolAddress: TON_JETOON1_POOL.address,
+          limit: minAmountOut,
+          next: { poolAddress: TON_JETOON2_POOL.address },
+        }),
+      });
+
+      return {
+        address: jettonWallet.address.toString(),
+        amount: toNano("0.5").toString(),
+        payload: swapBody.toBoc().toString("base64"),
+      };
+    } catch (err) {
+      console.error(err);
+      return undefined;
+    }
   }
 
   public async getEstimateSwapOut(
@@ -252,6 +410,76 @@ export class DedustSwapService {
 
     if (tokenAmount1 === "") {
       return "";
+    }
+
+    const tonClient = this.client;
+
+    const factory = tonClient.open(
+      Factory.createFromAddress(MAINNET_FACTORY_ADDR)
+    );
+
+    if (tokenName1 === "TON" && tokenName2 !== "TON") {
+      const JETTON = Asset.jetton(Address.parse(tokenAddress2));
+      const TON = Asset.native();
+
+      const Pool = tonClient.open(
+        await factory.getPool(PoolType.VOLATILE, [TON, JETTON])
+      );
+
+      const { amountOut } = await Pool.getEstimatedSwapOut({
+        assetIn: TON,
+        amountIn: toNano(tokenAmount1),
+      });
+
+      const numberAmount: number = Number(amountOut) / 10 ** decimals2;
+
+      return formatNumber(String(numberAmount));
+    }
+
+    if (tokenName1 !== "TON" && tokenName2 === "TON") {
+      const JETTON = Asset.jetton(Address.parse(tokenAddress1));
+      const TON = Asset.native();
+
+      const Pool = tonClient.open(
+        await factory.getPool(PoolType.VOLATILE, [TON, JETTON])
+      );
+
+      const { amountOut } = await Pool.getEstimatedSwapOut({
+        assetIn: JETTON,
+        amountIn: BigInt(Number(tokenAmount1) * 10 ** decimals1),
+      });
+
+      const stringAmount = fromNano(amountOut);
+
+      return formatNumber(stringAmount);
+    }
+    if (tokenName1 !== "TON" && tokenName2 !== "TON") {
+      const JETTON1 = Asset.jetton(Address.parse(tokenAddress1));
+      const JETTON2 = Asset.jetton(Address.parse(tokenAddress2));
+      const TON = Asset.native();
+
+      const TON_JETOON1_POOL = tonClient.open(
+        await factory.getPool(PoolType.VOLATILE, [TON, JETTON1])
+      );
+      const TON_JETOON2_POOL = tonClient.open(
+        await factory.getPool(PoolType.VOLATILE, [TON, JETTON2])
+      );
+
+      const { amountOut: amountOut1 } =
+        await TON_JETOON1_POOL.getEstimatedSwapOut({
+          assetIn: JETTON1,
+          amountIn: BigInt(Number(tokenAmount1) * 10 ** decimals1),
+        });
+
+      const { amountOut: amountOut2 } =
+        await TON_JETOON2_POOL.getEstimatedSwapOut({
+          assetIn: TON,
+          amountIn: amountOut1,
+        });
+
+      const numberValue: number = Number(amountOut2) / 10 ** decimals2;
+
+      return formatNumber(String(numberValue));
     }
 
     return "";
